@@ -1,7 +1,19 @@
+import matter from "gray-matter";
 import fs from "node:fs";
 import path from "node:path";
-import matter from "gray-matter";
-import { Dataset, Frontmatter, ReferenceIndexItem } from "../types";
+import {
+  extractReferenceSections,
+  extractReferenceSnippets,
+  processReferenceMarkdown,
+} from "../core/reference-markdown";
+import {
+  CURRENT_DATASET_SCHEMA_VERSION,
+  Dataset,
+  Frontmatter,
+  ReferenceIndexItem,
+  ReferenceSectionRecord,
+  ReferenceSnippetRecord,
+} from "../types";
 
 export interface BuildOptions {
   sourceLabel?: string;
@@ -12,7 +24,7 @@ export interface BuildOptions {
 const GITHUB_BASE =
   "https://github.com/Fechin/reference/blob/main/source/_posts";
 
-const MAX_HEADINGS = 12;
+const MAX_HEADINGS = 20;
 const MAX_SNIPPET_LINES = 12;
 
 export async function buildDatasetFromDir(
@@ -39,16 +51,23 @@ export async function buildDatasetFromDir(
     acc[entry.index.id] = entry.content;
     return acc;
   }, {});
+  const sections = entries.flatMap((entry) => entry.sections);
+  const snippets = entries.flatMap((entry) => entry.snippets);
 
   const dataset: Dataset = {
     meta: {
+      schemaVersion: CURRENT_DATASET_SCHEMA_VERSION,
       source: options.sourceLabel ?? "Fechin/reference",
       generatedAt: new Date().toISOString(),
       total: index.length,
+      sectionsTotal: sections.length,
+      snippetsTotal: snippets.length,
       version: options.version,
     },
     index,
     content,
+    sections,
+    snippets,
   };
 
   return dataset;
@@ -57,9 +76,19 @@ export async function buildDatasetFromDir(
 function parseMarkdownFile(
   filename: string,
   raw: string,
-): { index: ReferenceIndexItem; content: string } {
-  const { data, content } = matter(raw);
+): {
+  index: ReferenceIndexItem;
+  content: string;
+  sections: ReferenceSectionRecord[];
+  snippets: ReferenceSnippetRecord[];
+} {
+  const { data, content: rawContent } = matter(raw);
   const frontmatter = data as Frontmatter;
+  const normalizedContent = rawContent.trim();
+  const content = processReferenceMarkdown(normalizedContent);
+  const sourceMarkdown = processReferenceMarkdown(normalizedContent, {
+    tableMode: "preserve",
+  });
 
   const id = slugFromFilename(filename);
   const title =
@@ -69,9 +98,18 @@ function parseMarkdownFile(
   const category = selectFirstString(frontmatter.categories) ?? "General";
   const tags = sanitizeStringArray(frontmatter.tags);
   const summary = deriveSummary(content, frontmatter.intro);
-  const headings = extractHeadings(content);
-  const topSnippet = extractTopSnippet(content);
   const link = `${GITHUB_BASE}/${filename}`;
+  const sections = extractReferenceSections({
+    referenceId: id,
+    markdown: sourceMarkdown,
+  });
+  const snippets = extractReferenceSnippets({
+    referenceId: id,
+    sections,
+    sourceMarkdown,
+  });
+  const headings = extractHeadings(content);
+  const topSnippet = snippets[0]?.preview ?? extractTopSnippet(content);
 
   const index: ReferenceIndexItem = {
     id,
@@ -81,11 +119,13 @@ function parseMarkdownFile(
     summary,
     headings,
     topSnippet,
+    sectionCount: sections.length,
+    snippetCount: snippets.length,
     path: filename,
     link,
   };
 
-  return { index, content: sanitizeContent(content.trim()) };
+  return { index, content, sections, snippets };
 }
 
 function slugFromFilename(filename: string): string {
@@ -172,26 +212,6 @@ function trimSnippet(snippet: string): string {
   const innerLines = lines.slice(1, lines.length - 1); // drop fences
   const truncated = innerLines.slice(0, MAX_SNIPPET_LINES);
   return truncated.join("\n").trim();
-}
-
-function sanitizeContent(content: string): string {
-  return content
-    .split("\n")
-    .map((line) => {
-      // Remove standalone annotation lines: {.shortcuts}, {.marker-none}, etc.
-      if (/^\s*\{[.#][a-zA-Z][-a-zA-Z0-9 .#]*\}\s*$/.test(line)) {
-        return "";
-      }
-      // Remove annotations from code fence openings: ```html {.wrap} -> ```html
-      line = line.replace(/^(```\S*)\s*\{[.#][^}]*\}/, "$1");
-      // Remove class/id annotations from headings and inline content
-      line = line.replace(/\s*\{[.#][a-zA-Z][-a-zA-Z0-9 .#]*\}/g, "");
-      // Remove custom Hexo theme HTML tags: <yel>, </pur>, <shell>, etc.
-      line = line.replace(/<\/?(yel|pur|shell|motion|operator)>/gi, "");
-      return line;
-    })
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n");
 }
 
 function cleanWhitespace(value: string): string {

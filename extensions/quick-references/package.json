@@ -1,9 +1,9 @@
 {
   "$schema": "https://www.raycast.com/schemas/extension.json",
   "name": "quick-references",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "title": "Quick References",
-  "description": "Search and browse Fechin/reference cheat sheets with favorites and offline support.",
+  "description": "Search references and commands from Fechin/reference with first-run download and local caching.",
   "icon": "icon.png",
   "author": "daniel_schoeman",
   "license": "MIT",
@@ -25,6 +25,88 @@
       "subtitle": "Quick References",
       "description": "Search and browse Fechin/reference cheat sheets",
       "mode": "view"
+    },
+    {
+      "name": "search-commands",
+      "title": "Search Commands",
+      "subtitle": "Quick References",
+      "description": "Search commands, snippets, and sections across all references",
+      "mode": "view"
+    },
+    {
+      "name": "update-references",
+      "title": "Update References",
+      "subtitle": "Quick References",
+      "description": "Download and rebuild the latest reference dataset",
+      "mode": "view"
+    }
+  ],
+  "preferences": [
+    {
+      "name": "defaultOpenMode",
+      "type": "dropdown",
+      "required": false,
+      "title": "Default Open Mode",
+      "description": "Choose how references open from search results",
+      "default": "section-browser",
+      "data": [
+        {
+          "title": "Section Browser",
+          "value": "section-browser"
+        },
+        {
+          "title": "Full Reference",
+          "value": "full-reference"
+        }
+      ]
+    },
+    {
+      "name": "defaultCopyMode",
+      "type": "dropdown",
+      "required": false,
+      "title": "Default Command Copy Mode",
+      "description": "Choose whether shell prompts are stripped when copying commands",
+      "default": "strip-prompts",
+      "data": [
+        {
+          "title": "Strip Shell Prompts",
+          "value": "strip-prompts"
+        },
+        {
+          "title": "Preserve Original Command",
+          "value": "preserve"
+        }
+      ]
+    },
+    {
+      "name": "autoUpdateIntervalDays",
+      "type": "dropdown",
+      "required": false,
+      "title": "Auto Update Frequency",
+      "description": "Refresh references automatically after this many days",
+      "default": "7",
+      "data": [
+        {
+          "title": "Manual Only",
+          "value": "manual"
+        },
+        {
+          "title": "Every Day",
+          "value": "1"
+        },
+        {
+          "title": "Every 3 Days",
+          "value": "3"
+        },
+        {
+          "title": "Every 7 Days",
+          "value": "7"
+        },
+        {
+          "title": "Every 14 Days",
+          "value": "14"
+        }
+      ]
     }
   ],
   "dependencies": {
@@ -41,14 +123,16 @@
     "@types/react": "19.0.10",
     "eslint": "^9.22.0",
     "prettier": "^3.5.3",
-    "typescript": "^5.8.2"
+    "typescript": "^5.8.2",
+    "vitest": "^3.2.4"
   },
   "scripts": {
     "build": "ray build -e dist",
     "dev": "ray develop",
     "fix-lint": "ray lint --fix",
     "lint": "ray lint",
-    "publish": "npx @raycast/api@latest publish"
+    "publish": "npx @raycast/api@latest publish",
+    "test": "vitest run"
   },
   "platforms": [
     "macOS"

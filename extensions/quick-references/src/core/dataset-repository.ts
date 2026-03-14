@@ -1,81 +1,189 @@
 import { environment } from "@raycast/api";
-import fs from "node:fs";
 import path from "node:path";
-import { Dataset, DatasetMeta, ReferenceIndexItem } from "../types";
-
-const META_FILENAME = "meta.json";
-const INDEX_FILENAME = "index.json";
-const CONTENT_FILENAME = "content.json";
+import {
+  readDatasetFromDirectory,
+  readDatasetSearchDataFromDirectory,
+  readDatasetSummaryFromDirectory,
+  readReferenceDetailFromDirectory,
+  writeDatasetToDirectory,
+} from "./dataset-files";
+import {
+  CURRENT_DATASET_SCHEMA_VERSION,
+  Dataset,
+  ReferenceDetailRecord,
+  ReferenceIndexItem,
+} from "../types";
+import {
+  extractReferenceSections,
+  extractReferenceSnippets,
+} from "./reference-markdown";
 
 export class DatasetRepository {
   private readonly supportDir = path.join(environment.supportPath, "data");
 
   async load(): Promise<Dataset | undefined> {
-    return this.readFromSupport();
+    const dataset = await readDatasetFromDirectory(this.supportDir);
+    if (!dataset) {
+      return undefined;
+    }
+
+    if (
+      dataset.meta.schemaVersion === CURRENT_DATASET_SCHEMA_VERSION &&
+      Array.isArray(dataset.sections) &&
+      Array.isArray(dataset.snippets)
+    ) {
+      return dataset as Dataset;
+    }
+
+    const upgraded = this.upgradeDataset(dataset);
+    await this.save(upgraded);
+    return upgraded;
+  }
+
+  async loadReferenceIndex(): Promise<
+    | {
+        meta: Dataset["meta"];
+        index: ReferenceIndexItem[];
+      }
+    | undefined
+  > {
+    const summary = await readDatasetSummaryFromDirectory(this.supportDir);
+    if (!summary) {
+      return undefined;
+    }
+
+    if (summary.meta.schemaVersion !== CURRENT_DATASET_SCHEMA_VERSION) {
+      return undefined;
+    }
+
+    return summary;
+  }
+
+  async loadCommandSearchData(): Promise<
+    | {
+        meta: Dataset["meta"];
+        index: ReferenceIndexItem[];
+        sections: Dataset["sections"];
+        snippets: Dataset["snippets"];
+      }
+    | undefined
+  > {
+    const searchData = await readDatasetSearchDataFromDirectory(
+      this.supportDir,
+    );
+    if (!searchData) {
+      return undefined;
+    }
+
+    if (searchData.meta.schemaVersion !== CURRENT_DATASET_SCHEMA_VERSION) {
+      return undefined;
+    }
+
+    return searchData;
+  }
+
+  async loadReferenceDetail(
+    referenceId: string,
+  ): Promise<ReferenceDetailRecord | undefined> {
+    const summary = await readDatasetSummaryFromDirectory(this.supportDir);
+    if (!summary) {
+      return undefined;
+    }
+
+    if (summary.meta.schemaVersion !== CURRENT_DATASET_SCHEMA_VERSION) {
+      return undefined;
+    }
+
+    return readReferenceDetailFromDirectory(this.supportDir, referenceId);
   }
 
   async hasData(): Promise<boolean> {
-    const metaPath = path.join(this.supportDir, META_FILENAME);
-    return pathExists(metaPath);
+    return (await this.loadReferenceIndex()) !== undefined;
   }
 
   async save(dataset: Dataset): Promise<void> {
-    await fs.promises.mkdir(this.supportDir, { recursive: true });
-    await Promise.all([
-      fs.promises.writeFile(
-        path.join(this.supportDir, META_FILENAME),
-        JSON.stringify(dataset.meta, null, 2),
-        "utf8",
-      ),
-      fs.promises.writeFile(
-        path.join(this.supportDir, INDEX_FILENAME),
-        JSON.stringify(dataset.index, null, 2),
-        "utf8",
-      ),
-      fs.promises.writeFile(
-        path.join(this.supportDir, CONTENT_FILENAME),
-        JSON.stringify(dataset.content, null, 2),
-        "utf8",
-      ),
-    ]);
+    await writeDatasetToDirectory(this.supportDir, dataset);
   }
 
   getSupportDir(): string {
     return this.supportDir;
   }
 
-  private async readFromSupport(): Promise<Dataset | undefined> {
-    const metaPath = path.join(this.supportDir, META_FILENAME);
-    const indexPath = path.join(this.supportDir, INDEX_FILENAME);
-    const contentPath = path.join(this.supportDir, CONTENT_FILENAME);
+  private upgradeDataset(raw: {
+    meta: {
+      source: string;
+      generatedAt: string;
+      total: number;
+      version?: string;
+    };
+    index: ReferenceIndexItem[];
+    content: Record<string, string>;
+  }): Dataset {
+    const nextIndex = raw.index.map((reference) => ({ ...reference }));
+    const sections = nextIndex.flatMap((reference) =>
+      extractReferenceSections({
+        referenceId: reference.id,
+        markdown: raw.content[reference.id] ?? "",
+      }),
+    );
+    const snippets = nextIndex.flatMap((reference) =>
+      extractReferenceSnippets({
+        referenceId: reference.id,
+        sections: sections.filter(
+          (section) => section.referenceId === reference.id,
+        ),
+      }),
+    );
 
-    const exists = await pathExists(metaPath);
-    if (!exists) return undefined;
+    const snippetPreviewByReference = new Map<string, string>();
+    const sectionCountByReference = new Map<string, number>();
+    const snippetCountByReference = new Map<string, number>();
 
-    try {
-      const [metaRaw, indexRaw, contentRaw] = await Promise.all([
-        fs.promises.readFile(metaPath, "utf8"),
-        fs.promises.readFile(indexPath, "utf8"),
-        fs.promises.readFile(contentPath, "utf8"),
-      ]);
-
-      const meta = JSON.parse(metaRaw) as DatasetMeta;
-      const index = JSON.parse(indexRaw) as ReferenceIndexItem[];
-      const content = JSON.parse(contentRaw) as Record<string, string>;
-
-      return { meta, index, content };
-    } catch (error) {
-      console.error("[dataset] Failed to read support dataset", error);
-      return undefined;
+    for (const section of sections) {
+      sectionCountByReference.set(
+        section.referenceId,
+        (sectionCountByReference.get(section.referenceId) ?? 0) + 1,
+      );
     }
-  }
-}
 
-async function pathExists(target: string): Promise<boolean> {
-  try {
-    await fs.promises.access(target, fs.constants.F_OK);
-    return true;
-  } catch {
-    return false;
+    for (const snippet of snippets) {
+      if (!snippetPreviewByReference.has(snippet.referenceId)) {
+        snippetPreviewByReference.set(snippet.referenceId, snippet.preview);
+      }
+
+      snippetCountByReference.set(
+        snippet.referenceId,
+        (snippetCountByReference.get(snippet.referenceId) ?? 0) + 1,
+      );
+    }
+
+    for (const reference of nextIndex) {
+      reference.topSnippet =
+        reference.topSnippet ?? snippetPreviewByReference.get(reference.id);
+      reference.sectionCount =
+        reference.sectionCount ??
+        sectionCountByReference.get(reference.id) ??
+        0;
+      reference.snippetCount =
+        reference.snippetCount ??
+        snippetCountByReference.get(reference.id) ??
+        0;
+    }
+
+    return {
+      meta: {
+        schemaVersion: CURRENT_DATASET_SCHEMA_VERSION,
+        source: raw.meta.source,
+        generatedAt: raw.meta.generatedAt,
+        total: nextIndex.length,
+        sectionsTotal: sections.length,
+        snippetsTotal: snippets.length,
+        version: raw.meta.version,
+      },
+      index: nextIndex,
+      content: raw.content,
+      sections,
+      snippets,
+    };
   }
 }
