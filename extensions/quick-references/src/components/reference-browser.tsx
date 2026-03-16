@@ -135,7 +135,7 @@ export function ReferenceBrowser({
   const fullReferenceTarget = (
     <ReferenceDetail
       entry={entry}
-      markdown={processedMarkdown}
+      markdown={markdown}
       sectionCount={sections.length}
       snippetCount={snippets.length}
       isFavorite={isFavorite}

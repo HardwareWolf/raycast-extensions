@@ -129,7 +129,10 @@ export default function Command() {
           title: "References auto-updated",
           message: `${updated.meta.total} cheat sheets`,
         });
-        setData(updated);
+        setData({
+          meta: updated.meta,
+          index: updated.index,
+        });
       })
       .catch(() => {
         // Silently ignore background update failures - cached data still works
