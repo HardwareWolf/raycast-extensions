@@ -1,37 +1,40 @@
 # Quick References
 
-Raycast extension for searching and browsing [Fechin/reference](https://github.com/Fechin/reference) cheat sheets. Features offline support, fast fuzzy search, favorites, and markdown detail view.
+Raycast extension for searching [Fechin/reference](https://github.com/Fechin/reference) cheat sheets, sections, and commands. It downloads the dataset on first launch, caches it locally, supports in-reference search, and provides command-aware copy actions.
 
 ## Features
 
-- **Live data fetching**: Downloads cheat sheets from GitHub on first launch
-- **Fast search**: Search across titles, tags, headings, and content snippets
-- **Favorites section**: Favorite items appear at the top of the list
-- **Recents tracking**: Quick access to recently viewed references
-- **Detail view**: Full markdown rendering with metadata
-- **Copy actions**: Copy snippet, title, or link with one action
-- **Manual update**: Refresh data anytime to get the latest cheat sheets
+- **First-run download**: Fetches the upstream dataset on first launch and reuses a local cache afterwards
+- **Reference search**: Search across titles, tags, headings, summaries, and snippets
+- **Global command search**: Search commands, code blocks, and section matches across the full dataset
+- **In-reference search**: Open any reference and search inside it by section or command
+- **Command-aware copy**: Copy commands with or without shell prompts
+- **Favorites and recents**: Keep important references close at hand
+- **Manual refresh**: Rebuild the dataset from GitHub whenever you want
 
 ## Commands
 
-- **Search References**: Browse and search cheat sheets with favorites at the top
-- **Update References**: Download the latest reference data from GitHub
+- **Search References**: Browse references and open a searchable section browser
+- **Search Commands**: Search commands, snippets, and section matches across all references
+- **Update References**: Download and rebuild the latest dataset from GitHub
 
 ## Keyboard Shortcuts
 
-- `⌘F`: Toggle favorite (in list and detail views)
-- Standard Raycast copy/open actions available in the action panel
+- `⌘F`: Toggle favorite
+- `⌘⇧U`: Update references from action panels
+- Standard Raycast copy/open actions remain available in the action panel
 
 ## Permissions
 
-- `network`: Used to download reference data from GitHub
-- `filesystem`: Store downloaded data in Raycast support directory for offline use
+- `network`: Used to download fresh reference data from GitHub
+- `filesystem`: Used to store the cached dataset locally after the first download
 
 ## Development
 
 ```bash
 npm install
 npm run dev
+npm test
 npm run lint
 npm run build
 ```

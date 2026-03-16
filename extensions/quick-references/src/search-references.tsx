@@ -9,8 +9,9 @@ import {
 } from "@raycast/api";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ReferenceActionPanel } from "./components/reference-actions";
-import { ReferenceDetail } from "./components/reference-detail";
+import { ReferenceLoader } from "./components/reference-loader";
 import { DatasetRepository } from "./core/dataset-repository";
+import { getExtensionPreferences } from "./core/preferences";
 import { PreferenceStore } from "./core/store";
 import { ReferenceSearcher } from "./core/search";
 import { ReferenceUpdater } from "./services/updater";
@@ -20,15 +21,19 @@ const datasetRepository = new DatasetRepository();
 const preferenceStore = new PreferenceStore();
 const updater = new ReferenceUpdater(datasetRepository);
 
-const AUTO_UPDATE_INTERVAL_DAYS = 7;
 const ALL_CATEGORIES = "all";
 
-function isDatasetStale(generatedAt: string): boolean {
+function isDatasetStale(
+  generatedAt: string,
+  autoUpdateIntervalDays?: number,
+): boolean {
+  if (!autoUpdateIntervalDays) {
+    return false;
+  }
+
   const generated = new Date(generatedAt).getTime();
   if (isNaN(generated)) return false;
-  return (
-    Date.now() - generated > AUTO_UPDATE_INTERVAL_DAYS * 24 * 60 * 60 * 1000
-  );
+  return Date.now() - generated > autoUpdateIntervalDays * 24 * 60 * 60 * 1000;
 }
 
 function formatUpdateAge(generatedAt: string): string {
@@ -41,18 +46,25 @@ function formatUpdateAge(generatedAt: string): string {
 }
 
 export default function Command() {
+  const { autoUpdateIntervalDays, defaultOpenMode } = getExtensionPreferences();
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORIES);
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [recents, setRecents] = useState<string[]>([]);
-  const [data, setData] = useState<Dataset | undefined>(undefined);
+  const [data, setData] = useState<
+    | {
+        meta: Dataset["meta"];
+        index: ReferenceIndexItem[];
+      }
+    | undefined
+  >(undefined);
   const [isLoading, setIsLoading] = useState(true);
   const autoUpdateTriggered = useRef(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
     try {
-      let dataset = await datasetRepository.load();
+      let dataset = await datasetRepository.loadReferenceIndex();
 
       if (!dataset) {
         const toast = await showToast({
@@ -62,10 +74,14 @@ export default function Command() {
         });
 
         try {
-          dataset = await updater.update();
+          const updated = await updater.update();
+          dataset = {
+            meta: updated.meta,
+            index: updated.index,
+          };
           toast.style = Toast.Style.Success;
           toast.title = "References downloaded";
-          toast.message = `${dataset.meta.total} cheat sheets loaded`;
+          toast.message = `${updated.meta.total} cheat sheets loaded`;
         } catch (downloadError) {
           toast.style = Toast.Style.Failure;
           toast.title = "Download failed";
@@ -102,7 +118,7 @@ export default function Command() {
   // Auto-update stale data in the background
   useEffect(() => {
     if (!data || autoUpdateTriggered.current) return;
-    if (!isDatasetStale(data.meta.generatedAt)) return;
+    if (!isDatasetStale(data.meta.generatedAt, autoUpdateIntervalDays)) return;
 
     autoUpdateTriggered.current = true;
     updater
@@ -113,12 +129,15 @@ export default function Command() {
           title: "References auto-updated",
           message: `${updated.meta.total} cheat sheets`,
         });
-        setData(updated);
+        setData({
+          meta: updated.meta,
+          index: updated.index,
+        });
       })
       .catch(() => {
         // Silently ignore background update failures - cached data still works
       });
-  }, [data]);
+  }, [data, autoUpdateIntervalDays]);
 
   const searcher = useMemo(
     () => (data ? new ReferenceSearcher(data.index) : undefined),
@@ -159,11 +178,14 @@ export default function Command() {
     });
 
     try {
-      const dataset = await updater.update();
+      const updated = await updater.update();
       toast.style = Toast.Style.Success;
       toast.title = "References updated";
-      toast.message = `${dataset.meta.total} cheat sheets`;
-      setData(dataset);
+      toast.message = `${updated.meta.total} cheat sheets`;
+      setData({
+        meta: updated.meta,
+        index: updated.index,
+      });
     } catch (updateError) {
       toast.style = Toast.Style.Failure;
       toast.title = "Update failed";
@@ -172,7 +194,6 @@ export default function Command() {
     }
   };
 
-  const content = data?.content ?? {};
   const index = useMemo(() => data?.index ?? [], [data?.index]);
 
   const matchesCategory = useCallback(
@@ -187,7 +208,7 @@ export default function Command() {
   }, [index]);
 
   const searchPlaceholder = useMemo(() => {
-    const base = "Search cheat sheets, tags, or commands";
+    const base = "Search references, tags, sections, or commands";
     if (!data?.meta.generatedAt) return base;
     const age = formatUpdateAge(data.meta.generatedAt);
     return age ? `${base} · ${age}` : base;
@@ -234,28 +255,73 @@ export default function Command() {
     mainResults.length > 0;
 
   const renderItem = (item: ReferenceIndexItem, isFavorite: boolean) => {
-    const detailMarkdown = content[item.id] ?? "_No content found_";
+    const browserTarget = (
+      <ReferenceLoader
+        entry={item}
+        mode="browser"
+        isFavorite={isFavorite}
+        onToggleFavorite={() => handleToggleFavorite(item.id)}
+        onUpdate={handleUpdate}
+      />
+    );
+    const fullReferenceTarget = (
+      <ReferenceLoader
+        entry={item}
+        mode="detail"
+        isFavorite={isFavorite}
+        onToggleFavorite={() => handleToggleFavorite(item.id)}
+        onUpdate={handleUpdate}
+      />
+    );
+    const openActions =
+      defaultOpenMode === "full-reference"
+        ? [
+            {
+              title: "Open Full Reference",
+              target: fullReferenceTarget,
+              onOpen: () => handleOpen(item.id),
+              icon: Icon.Sidebar,
+            },
+            {
+              title: "Open Section Browser",
+              target: browserTarget,
+              onOpen: () => handleOpen(item.id),
+              icon: Icon.List,
+            },
+          ]
+        : [
+            {
+              title: "Open Reference",
+              target: browserTarget,
+              onOpen: () => handleOpen(item.id),
+              icon: Icon.List,
+            },
+            {
+              title: "Open Full Reference",
+              target: fullReferenceTarget,
+              onOpen: () => handleOpen(item.id),
+              icon: Icon.Sidebar,
+            },
+          ];
+
     return (
       <List.Item
         key={item.id}
         title={item.title}
-        accessories={buildAccessories(item, isFavorite, recents)}
+        subtitle={item.summary}
+        accessories={buildAccessories(
+          item,
+          isFavorite,
+          recents,
+          item.snippetCount,
+        )}
         actions={
           <ReferenceActionPanel
             entry={item}
             isFavorite={isFavorite}
             onToggleFavorite={() => handleToggleFavorite(item.id)}
-            onOpen={() => handleOpen(item.id)}
             onUpdate={handleUpdate}
-            detailTarget={
-              <ReferenceDetail
-                entry={item}
-                markdown={detailMarkdown}
-                isFavorite={isFavorite}
-                onToggleFavorite={() => handleToggleFavorite(item.id)}
-                onUpdate={handleUpdate}
-              />
-            }
+            openActions={openActions}
           />
         }
       />
@@ -308,8 +374,8 @@ export default function Command() {
       {isLoading && !data && (
         <List.EmptyView
           icon={Icon.Download}
-          title="Downloading references..."
-          description="First time setup — fetching cheat sheets from GitHub"
+          title="Loading references..."
+          description="Checking the local cache or fetching references for first-time setup"
         />
       )}
 
@@ -351,6 +417,7 @@ function buildAccessories(
   item: ReferenceIndexItem,
   isFavorite: boolean,
   recents: string[],
+  snippetCount: number,
 ): List.Item.Accessory[] {
   const accessories: List.Item.Accessory[] = [];
   if (isFavorite) {
@@ -362,6 +429,15 @@ function buildAccessories(
   accessories.push({
     tag: { value: item.category, color: Color.SecondaryText },
   });
+
+  if (snippetCount > 0) {
+    accessories.push({
+      tag: {
+        value: `${snippetCount} cmd`,
+        color: Color.Green,
+      },
+    });
+  }
 
   if (item.tags.length > 0) {
     accessories.push({
